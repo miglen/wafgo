@@ -143,3 +143,42 @@ func TestEnforcementInJSON(t *testing.T) {
 		t.Fatalf("expected enforcement=not_observed, got %v", recs[0]["enforcement"])
 	}
 }
+
+func TestBannerContainsIdentity(t *testing.T) {
+	b := banner(newColors(false))
+	for _, want := range []string{"github.com/miglen/wafgo", "____", `\__,`} {
+		if !strings.Contains(b, want) {
+			t.Errorf("banner missing %q:\n%s", want, b)
+		}
+	}
+}
+
+func TestConcurrentMultiTargetKeepsOrderAndCount(t *testing.T) {
+	// Several fake targets scanned with concurrency > 1 must all appear, in
+	// input order, once each.
+	var srvs []*httptest.Server
+	var urls []string
+	for i := 0; i < 6; i++ {
+		s := frontedOnly()
+		defer s.Close()
+		srvs = append(srvs, s)
+		urls = append(urls, s.URL)
+	}
+	args := append([]string{"-q", "-c", "6", "-f", "json"}, urls...)
+	out, _, code := runCLI(t, args...)
+	if code != exitOK {
+		t.Fatalf("code=%d", code)
+	}
+	var recs []map[string]any
+	if err := json.Unmarshal([]byte(out), &recs); err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != len(urls) {
+		t.Fatalf("got %d records, want %d", len(recs), len(urls))
+	}
+	for i, u := range urls {
+		if recs[i]["url"] != u {
+			t.Fatalf("record %d out of order: got %v want %s", i, recs[i]["url"], u)
+		}
+	}
+}

@@ -587,14 +587,17 @@ func listWAFs(w io.Writer, format string, c colors) int {
 }
 
 func banner(c colors) string {
-	return fmt.Sprintf(`%s
-     ,-.___,-.
-     \_/_ _\_/     %s~ wafgo %s ~%s
-       )O_O(       %s~ Sniffing Web Application Firewalls, fast ~%s
-      { (_) }
-       `+"`-^-'"+`
-%s
-`, c.W, c.G, wafgo.Version, c.W, c.Y, c.W, c.E)
+	// Figlet "Slant" wafgo. Backticks and backslashes are escaped for a
+	// double-quoted string.
+	art := "" +
+		"                 ____\n" +
+		" _      ______ _/ __/___ _____\n" +
+		"| | /| / / __ `/ /_/ __ `/ __ \\\n" +
+		"| |/ |/ / /_/ / __/ /_/ / /_/ /\n" +
+		"|__/|__/\\__,_/_/  \\__, /\\____/\n" +
+		"                 /____/\n"
+	return fmt.Sprintf("%s%s\n        %sgithub.com/miglen/wafgo%s  %s~ v%s ~%s\n\n",
+		c.W, art, c.C, c.E, c.Y, wafgo.Version, c.E)
 }
 
 type colors struct{ W, Y, G, R, B, C, E string }

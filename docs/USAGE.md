@@ -104,6 +104,17 @@ wafw00f's, so existing tooling keeps working.
 
 ## Examples
 
+### Scanning many hosts concurrently
+
+Targets (from the command line and/or `-i`) are scanned by a worker pool;
+`-c`/`--concurrency` (default 10) sets how many run at once. Per-target output
+blocks stay intact and the result records keep input order regardless of
+concurrency. For a large list, raise `-c`:
+
+```bash
+wafgo -c 50 -i hosts.txt -f json -o report.json   # 50 hosts in flight
+```
+
 ```bash
 # JSON report for a list of hosts, 25 at a time
 wafgo -c 25 -f json -i hosts.txt -o report.json
