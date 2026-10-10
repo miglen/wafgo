@@ -107,10 +107,18 @@ feature send probe traffic.
 
 ## Docker
 
+Pull the published multi-arch image (linux/amd64 and linux/arm64) from Docker Hub:
+
+```bash
+docker run --rm miglen/wafgo https://example.com
+docker run --rm miglen/wafgo -a -f json https://example.com
+```
+
+Or build it yourself:
+
 ```bash
 docker build -t wafgo .
 docker run --rm wafgo https://example.com
-docker run --rm wafgo -a -f json https://example.com
 ```
 
 The image is built `FROM scratch` (static binary, non-root, CA roots included),

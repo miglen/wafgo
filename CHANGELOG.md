@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Published multi-arch Docker image `miglen/wafgo` (linux/amd64, linux/arm64) on Docker Hub.
+
 ### Fixed
 - Preserve existing report files when saving fails, and report CLI output
   failures through the exit status, including short writes and file-close errors.
