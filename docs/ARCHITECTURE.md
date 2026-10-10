@@ -89,3 +89,20 @@ make generate WAFW00F_SRC=/path/to/wafw00f
 With `--origins-active`, each non-fronted candidate is fetched directly (TCP to
 the candidate IP, original SNI + `Host`) and its response compared to the
 fronted site to confirm it is the real origin.
+
+## Enforcement verdict (CDN vs. WAF)
+
+A signature only proves a WAF/CDN is in path. `assessEnforcement` (scan.go)
+compares the normal and attack responses: a different status code, a hard-block
+status (403/406/429/…), a dropped connection, or a block/challenge page in the
+attack body ⇒ `blocking`; otherwise ⇒ `not_observed` (fronted only). The verdict
+is on every `Report` and in the `enforcement` output field.
+
+## Active bypass fuzzer (`fuzz/`)
+
+`fuzz.Fuzzer.Run` sends a benign control request, then every seed payload under
+every selected tamper (`fuzz/tampers.go`: case, URL/double-URL/HTML-entity/
+unicode encoding, SQL comments, whitespace substitution, …) at the chosen
+injection point (query/path/body/header). A variant is a **bypass** when the raw
+payload for that seed was blocked but the tampered variant passed. It reuses the
+`wafgo.Engine` transport and is gated behind `--authorized-test` in the CLI.

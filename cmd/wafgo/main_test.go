@@ -102,3 +102,44 @@ func TestUnknownTestWAF(t *testing.T) {
 		t.Fatalf("expected usage error, got %d", code)
 	}
 }
+
+// frontedOnly mimics a CDN (Cloudflare header) that does NOT block attacks.
+func frontedOnly() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "cloudflare")
+		w.Header().Set("CF-RAY", "abc123-LAX")
+		_, _ = w.Write([]byte("<html><title>home</title></html>"))
+	}))
+}
+
+func TestEnforcementDistinguishesCDNFromBlockingWAF(t *testing.T) {
+	block := fakeWAF()
+	defer block.Close()
+	out, _, _ := runCLI(t, "-q", block.URL)
+	if !strings.Contains(out, "actively filtering") {
+		t.Fatalf("blocking WAF should be reported as actively filtering:\n%s", out)
+	}
+
+	cdn := frontedOnly()
+	defer cdn.Close()
+	out, _, _ = runCLI(t, "-q", cdn.URL)
+	if !strings.Contains(out, "Cloudflare") {
+		t.Fatalf("expected Cloudflare detection:\n%s", out)
+	}
+	if !strings.Contains(out, "in path only") {
+		t.Fatalf("CDN-only site should be reported as in path only, not blocking:\n%s", out)
+	}
+}
+
+func TestEnforcementInJSON(t *testing.T) {
+	cdn := frontedOnly()
+	defer cdn.Close()
+	out, _, _ := runCLI(t, "-q", "-f", "json", cdn.URL)
+	var recs []map[string]any
+	if err := json.Unmarshal([]byte(out), &recs); err != nil {
+		t.Fatal(err)
+	}
+	if recs[0]["enforcement"] != "not_observed" {
+		t.Fatalf("expected enforcement=not_observed, got %v", recs[0]["enforcement"])
+	}
+}

@@ -26,7 +26,14 @@ a parity test proving identical results) and adds the WAF fingerprints from
 - **Fast.** Probe requests for a target run concurrently over reused
   connections; multiple targets scan in parallel (`-c`). A typical scan is one
   round-trip of wall-clock time instead of six sequential ones.
+- **CDN vs. enforcing WAF.** Every detection is tagged `actively filtering`
+  (the attack probes were blocked) or `in path only` (fronted by a CDN/proxy
+  such as Cloudflare, but no blocking observed) — so a `cf-ray` header is not
+  mistaken for an enforcing firewall.
 - **Generic detection** — behavioural heuristics when no signature matches.
+- **Active bypass fuzzer** (`--fuzz`) — sends an attack payload and ~11
+  tampered encodings of it at a chosen injection point and reports which
+  variants the WAF lets through. Requires `--authorized-test`.
 - **Origin IP discovery** (`-O`) — DNS, Certificate Transparency (crt.sh),
   common origin subdomains, and optional Shodan/Censys; optional direct-connect
   confirmation. Inspired by [cloudbunny](https://github.com/Warflop/cloudbunny).

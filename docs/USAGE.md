@@ -31,6 +31,42 @@ a scheme is treated as `https://`.
 |      | `--shodan-key` | Shodan API key for origin discovery (or `SHODAN_API_KEY`). |
 |      | `--censys-id` / `--censys-secret` | Censys credentials (or `CENSYS_API_ID` / `CENSYS_API_SECRET`). |
 | `-X` | `--bypass` | Show documented bypass techniques for detected WAFs (authorized testing only). |
+|      | `--fuzz` | Actively send tampered payloads and report which bypass the WAF. Requires `--authorized-test`. |
+|      | `--authorized-test` | Confirm you are authorized to send attack traffic to the target(s). |
+|      | `--fuzz-where` | Injection point: `query` (default), `path`, `body` or `header`. |
+|      | `--fuzz-param` | Parameter/header name to inject into (default: generated). |
+|      | `--fuzz-categories` | Comma-separated payload categories, e.g. `xss,sqli` (default: all). |
+|      | `--fuzz-tampers` | Comma-separated tampers to try (default: all). |
+|      | `--fuzz-delay` | Delay between fuzz requests per worker, in seconds. |
+|      | `--fuzz-workers` | Concurrent fuzz requests per target (default 5). |
+
+## Enforcement: CDN vs. actively blocking WAF
+
+A signature match means a WAF/CDN is *in the request path* — not necessarily
+that it is blocking. wafgo compares the attack probe to the normal response and
+labels each detection:
+
+- **actively filtering** — the attack probe was blocked or answered differently
+  (e.g. HTTP 403 vs 200, or a challenge/block page).
+- **in path only** — the attack probes passed unchanged; the WAF/CDN is fronting
+  the site but was not observed blocking (typical of Cloudflare used purely as a
+  CDN).
+
+This appears in the text output under each detection and as the `enforcement`
+field/column in JSON and CSV (`blocking`, `not_observed`, or `unknown`).
+
+## Active bypass fuzzing
+
+`--fuzz` (with `--authorized-test`) establishes a control response, confirms the
+raw attack payload is blocked, then tries tampered variants (case, URL/double-
+URL/HTML-entity/unicode encoding, SQL comments, whitespace tricks, etc.) and
+reports which ones the WAF lets through. Scope it with `--fuzz-where`,
+`--fuzz-param`, `--fuzz-categories` and `--fuzz-tampers`; throttle with
+`--fuzz-delay` / `--fuzz-workers`.
+
+```bash
+wafgo --fuzz --authorized-test --fuzz-where query --fuzz-param q https://example.com/search
+```
 
 ## Output formats
 

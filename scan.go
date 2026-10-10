@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -189,14 +190,67 @@ type Report struct {
 	Generic *Generic `json:"generic,omitempty"`
 	// GenericRan reports whether the generic detection was performed.
 	GenericRan bool `json:"-"`
+	// Enforcement says whether the WAF/CDN was observed actively filtering the
+	// attack probes, versus merely fronting the site (CDN/proxy in path).
+	Enforcement Enforcement `json:"enforcement"`
+	// EnforcementReason explains the Enforcement verdict.
+	EnforcementReason string `json:"enforcement_reason,omitempty"`
 	// Requests is the number of successful HTTP requests made.
 	Requests int `json:"requests"`
 	// Site gives access to the raw responses.
 	Site *Site `json:"-"`
 }
 
+// Enforcement distinguishes a WAF/CDN that is actively blocking from one that
+// is only fronting the site (e.g. Cloudflare used purely as a CDN/proxy).
+type Enforcement string
+
+// Enforcement verdicts.
+const (
+	// EnforcementBlocking: the attack probes were blocked or answered
+	// differently — the WAF is actively filtering.
+	EnforcementBlocking Enforcement = "blocking"
+	// EnforcementNotObserved: a WAF/CDN is in path but the attack probes
+	// passed unchanged — no active blocking was observed on these probes.
+	EnforcementNotObserved Enforcement = "not_observed"
+	// EnforcementUnknown: not enough signal (e.g. no attack response, or
+	// nothing in path).
+	EnforcementUnknown Enforcement = "unknown"
+)
+
+// hardBlockStatus lists status codes that signal an attack was refused.
+var hardBlockStatus = map[int]bool{403: true, 406: true, 409: true, 418: true, 429: true, 451: true, 501: true}
+
+var enforceBodyMarkers = regexp.MustCompile(`(?i)access denied|request (blocked|rejected|denied)|has been blocked|blocked by|security (policy|violation)|web application firewall|attack detected|malicious|not acceptable|incident id|ray id`)
+
+// assessEnforcement compares the normal and attack responses to decide whether
+// the security layer actively filtered the attack probe.
+func assessEnforcement(site *Site) (Enforcement, string) {
+	if site == nil || site.Normal == nil {
+		return EnforcementUnknown, ""
+	}
+	if site.Attack == nil {
+		return EnforcementBlocking, "the attack request was dropped or reset (connection/packet level)"
+	}
+	n, a := site.Normal, site.Attack
+	if a.StatusCode != n.StatusCode {
+		verb := "a different response code"
+		if hardBlockStatus[a.StatusCode] {
+			verb = "a block"
+		}
+		return EnforcementBlocking, fmt.Sprintf("attack probe returned %s (HTTP %d vs normal %d)", verb, a.StatusCode, n.StatusCode)
+	}
+	if enforceBodyMarkers.Match(a.Body) && !enforceBodyMarkers.Match(n.Body) {
+		return EnforcementBlocking, "attack response body contains a block/challenge page"
+	}
+	return EnforcementNotObserved, "attack probes passed unchanged; the WAF/CDN is in path but was not observed blocking"
+}
+
 // Detected reports whether any WAF (signature or generic) was found.
 func (r *Report) Detected() bool { return len(r.WAFs) > 0 || r.Generic != nil }
+
+// Enforcing reports whether active filtering was observed.
+func (r *Report) Enforcing() bool { return r.Enforcement == EnforcementBlocking }
 
 // probe holds the per-target request plan.
 type probe struct {
@@ -324,6 +378,7 @@ func (e *Engine) scan(ctx context.Context, target string, only *plugins.Plugin) 
 	if site.Attack != nil {
 		rep.TriggerURL = site.Attack.URL
 	}
+	rep.Enforcement, rep.EnforcementReason = assessEnforcement(site)
 
 	if only != nil {
 		if only.Detect(site) {

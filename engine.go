@@ -183,13 +183,18 @@ type Request struct {
 	// URL is the full URL to fetch. The path is sent as-is, without
 	// normalisation, so traversal sequences survive.
 	URL string
+	// Method is the HTTP method; empty means GET.
+	Method string
 	// Params are appended to the query string.
 	Params []Param
 	// Header overrides the engine headers when non-nil.
 	Header http.Header
+	// Body is the raw request body (for POST/PUT). When set and no
+	// Content-Type header is present, application/x-www-form-urlencoded is used.
+	Body []byte
 }
 
-// Do sends a single GET request. It returns an error for transport failures;
+// Do sends a single request. It returns an error for transport failures;
 // HTTP error statuses are not errors.
 func (e *Engine) Do(ctx context.Context, r Request) (*Response, error) {
 	u, err := url.Parse(r.URL)
@@ -209,7 +214,15 @@ func (e *Engine) Do(ctx context.Context, r Request) (*Response, error) {
 		}
 		u.RawQuery = b.String()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	method := r.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	var bodyReader io.Reader
+	if r.Body != nil {
+		bodyReader = strings.NewReader(string(r.Body))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -223,6 +236,9 @@ func (e *Engine) Do(ctx context.Context, r Request) (*Response, error) {
 	if _, ok := req.Header["User-Agent"]; !ok {
 		// An empty value stops net/http from adding its own User-Agent.
 		req.Header["User-Agent"] = []string{""}
+	}
+	if r.Body != nil && req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	if host := req.Header.Get("Host"); host != "" {
 		req.Host = host

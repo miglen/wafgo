@@ -15,13 +15,16 @@ import (
 	"github.com/miglen/wafgo/plugins"
 )
 
-// Record is one output row, compatible with wafw00f's JSON/CSV output.
+// Record is one output row. The first five fields match wafw00f's JSON/CSV
+// output; enforcement is a wafgo addition distinguishing an actively-blocking
+// WAF from a WAF/CDN that is merely in path.
 type Record struct {
 	URL          string  `json:"url"`
 	Detected     bool    `json:"detected"`
 	TriggerURL   *string `json:"trigger_url"`
 	Firewall     string  `json:"firewall"`
 	Manufacturer string  `json:"manufacturer"`
+	Enforcement  string  `json:"enforcement,omitempty"`
 }
 
 // NewRecord builds a record the way wafw00f's buildResultRecord does. waf is
@@ -61,6 +64,14 @@ func (r *Report) Records() []Record {
 	}
 	if len(out) == 0 && len(r.WAFs) == 0 {
 		out = append(out, NewRecord(r.Target, "", ""))
+	}
+	// Tag detections with the enforcement verdict (CDN-in-path vs blocking).
+	if len(r.WAFs) > 0 {
+		for i := range out {
+			if out[i].Detected {
+				out[i].Enforcement = string(r.Enforcement)
+			}
+		}
 	}
 	return out
 }
@@ -112,13 +123,13 @@ func WriteRecords(w io.Writer, f Format, recs []Record) error {
 		return enc.Encode(recs)
 	case FormatCSV:
 		cw := csv.NewWriter(w)
-		_ = cw.Write([]string{"url", "detected", "trigger_url", "firewall", "manufacturer"})
+		_ = cw.Write([]string{"url", "detected", "trigger_url", "firewall", "manufacturer", "enforcement"})
 		for _, r := range recs {
 			t := ""
 			if r.TriggerURL != nil {
 				t = *r.TriggerURL
 			}
-			_ = cw.Write([]string{r.URL, strconv.FormatBool(r.Detected), t, r.Firewall, r.Manufacturer})
+			_ = cw.Write([]string{r.URL, strconv.FormatBool(r.Detected), t, r.Firewall, r.Manufacturer, r.Enforcement})
 		}
 		cw.Flush()
 		return cw.Error()

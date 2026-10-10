@@ -25,6 +25,7 @@ import (
 
 	"github.com/miglen/wafgo"
 	"github.com/miglen/wafgo/bypass"
+	"github.com/miglen/wafgo/fuzz"
 	"github.com/miglen/wafgo/origin"
 	"github.com/miglen/wafgo/plugins"
 )
@@ -66,6 +67,16 @@ type config struct {
 	censysID     string
 	censysSecret string
 	bypass       bool
+
+	// Active bypass fuzzer.
+	fuzz        bool
+	fuzzParam   string
+	fuzzWhere   string
+	fuzzCats    string
+	fuzzTampers string
+	fuzzDelay   float64
+	fuzzWorkers int
+	fuzzAuthOK  bool
 }
 
 func newFlags(cfg *config, stderr io.Writer) *flag.FlagSet {
@@ -93,6 +104,14 @@ func newFlags(cfg *config, stderr io.Writer) *flag.FlagSet {
 	fs.StringVar(&cfg.censysID, "censys-id", "", "Censys API ID for origin discovery (or CENSYS_API_ID)")
 	fs.StringVar(&cfg.censysSecret, "censys-secret", "", "Censys API secret (or CENSYS_API_SECRET)")
 	fs.BoolVarP(&cfg.bypass, "bypass", "X", false, "show documented bypass techniques for detected WAFs (authorized testing only)")
+	fs.BoolVar(&cfg.fuzz, "fuzz", false, "actively send tampered payloads and report which bypass the WAF (requires --authorized-test)")
+	fs.BoolVar(&cfg.fuzzAuthOK, "authorized-test", false, "confirm you are authorized to send attack traffic to the target(s)")
+	fs.StringVar(&cfg.fuzzWhere, "fuzz-where", "query", "injection point: query, path, body or header")
+	fs.StringVar(&cfg.fuzzParam, "fuzz-param", "", "parameter/header name to inject into (default: generated)")
+	fs.StringVar(&cfg.fuzzCats, "fuzz-categories", "", "comma-separated payload categories (default: all; e.g. xss,sqli)")
+	fs.StringVar(&cfg.fuzzTampers, "fuzz-tampers", "", "comma-separated tampers to try (default: all)")
+	fs.Float64Var(&cfg.fuzzDelay, "fuzz-delay", 0, "delay between fuzz requests per worker, in seconds")
+	fs.IntVar(&cfg.fuzzWorkers, "fuzz-workers", 5, "concurrent fuzz requests per target")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: wafgo [options] url [url ...]\n\nExamples:\n"+
 			"  wafgo https://example.com\n"+
@@ -242,7 +261,28 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		})
 	}
 
-	ex := extras{finder: finder, bypass: cfg.bypass, aux: aux, col: col}
+	var fuzzer *fuzz.Fuzzer
+	if cfg.fuzz {
+		if !cfg.fuzzAuthOK {
+			return usageErr("--fuzz sends attack traffic; pass --authorized-test to confirm you are authorized to test the target(s)")
+		}
+		loc := fuzz.Location(strings.ToLower(cfg.fuzzWhere))
+		switch loc {
+		case fuzz.LocQuery, fuzz.LocPath, fuzz.LocBody, fuzz.LocHeader:
+		default:
+			return usageErr("invalid --fuzz-where %q (want query, path, body or header)", cfg.fuzzWhere)
+		}
+		fuzzer = fuzz.New(eng, fuzz.Options{
+			Location:    loc,
+			Param:       cfg.fuzzParam,
+			Categories:  splitList(cfg.fuzzCats),
+			Tampers:     splitList(cfg.fuzzTampers),
+			Concurrency: cfg.fuzzWorkers,
+			Delay:       time.Duration(cfg.fuzzDelay * float64(time.Second)),
+		})
+	}
+
+	ex := extras{finder: finder, bypass: cfg.bypass, fuzzer: fuzzer, aux: aux, col: col}
 	records, failed := scanAll(ctx, eng, targets, only, max(cfg.concurrency, 1), human, col, log, ex)
 
 	if cfg.output != "" || resultsToStdout {
@@ -271,6 +311,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 type extras struct {
 	finder *origin.Finder // non-nil when origin discovery is enabled
 	bypass bool           // print documented bypass techniques
+	fuzzer *fuzz.Fuzzer   // non-nil when the active bypass fuzzer is enabled
 	aux    io.Writer      // where extras output goes (stdout, or stderr if results use stdout)
 	col    colors
 }
@@ -368,6 +409,12 @@ func scanOne(ctx context.Context, eng *wafgo.Engine, raw string, only *plugins.P
 				names[i] = c.C + p.Name + c.E
 			}
 			fmt.Fprintf(w, "[+] The site %s%s%s is behind %s WAF.\n", c.B, target, c.E, strings.Join(names, " and/or "))
+			switch rep.Enforcement {
+			case wafgo.EnforcementBlocking:
+				fmt.Fprintf(w, "    %s↳ actively filtering%s — %s\n", c.G, c.E, rep.EnforcementReason)
+			case wafgo.EnforcementNotObserved:
+				fmt.Fprintf(w, "    %s↳ in path only (no blocking observed)%s — likely CDN/proxy; %s\n", c.Y, c.E, rep.EnforcementReason)
+			}
 		}
 		if rep.GenericRan {
 			fmt.Fprintln(w, "[+] Generic Detection results:")
@@ -390,7 +437,53 @@ func scanOne(ctx context.Context, eng *wafgo.Engine, raw string, only *plugins.P
 	if ex.bypass {
 		renderBypass(rep.WAFs, aux, c)
 	}
+	if ex.fuzzer != nil {
+		renderFuzz(ctx, ex.fuzzer, target, aux, c)
+	}
 	return rep.Records(), true
+}
+
+func renderFuzz(ctx context.Context, f *fuzz.Fuzzer, target string, w io.Writer, c colors) {
+	fmt.Fprintf(w, "%s[!] Active bypass fuzzing %s%s (authorized testing only).\n", c.R, target, c.E)
+	res, err := f.Run(ctx, target)
+	if err != nil && res == nil {
+		fmt.Fprintf(w, "%s[-] Fuzzing failed: %v%s\n", c.R, err, c.E)
+		return
+	}
+	fmt.Fprintf(w, "[+] Injected into %s %q; control response HTTP %d; %d requests sent.\n",
+		res.Location, res.Param, res.ControlStatus, res.Requests)
+	bypasses := res.Bypasses()
+	if len(bypasses) == 0 {
+		fmt.Fprintln(w, "[-] No tampered payload bypassed the WAF (of those whose raw form was blocked).")
+		return
+	}
+	fmt.Fprintf(w, "%s[+] %d bypass(es) found:%s\n", c.G, len(bypasses), c.E)
+	for _, b := range bypasses {
+		fmt.Fprintf(w, "    %s%-5s%s via %s%-14s%s HTTP %d  %s\n",
+			c.Y, b.Category, c.E, c.C, b.Tamper, c.E, b.Status, truncate(b.Value, 60))
+	}
+}
+
+func truncate(s string, n int) string {
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\r", "")
+	if len(s) > n {
+		return s[:n-1] + "…"
+	}
+	return s
+}
+
+func splitList(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := parts[:0]
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func renderOrigins(ctx context.Context, f *origin.Finder, target string, w io.Writer, c colors) {
