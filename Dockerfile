@@ -1,13 +1,15 @@
 # ---- build ----
-FROM golang:1.27.2-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine AS build
 WORKDIR /src
 # Cache modules first.
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=docker
+ARG TARGETOS
+ARG TARGETARCH
 # Static, stripped binary so it runs on scratch.
-RUN CGO_ENABLED=0 go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
       -ldflags "-s -w -X github.com/miglen/wafgo.Version=${VERSION}" \
       -o /out/wafgo ./cmd/wafgo
 
