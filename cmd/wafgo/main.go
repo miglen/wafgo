@@ -24,6 +24,8 @@ import (
 	flag "github.com/spf13/pflag"
 
 	"github.com/miglen/wafgo"
+	"github.com/miglen/wafgo/bypass"
+	"github.com/miglen/wafgo/origin"
 	"github.com/miglen/wafgo/plugins"
 )
 
@@ -56,6 +58,14 @@ type config struct {
 	noColors    bool
 	quiet       bool
 	concurrency int
+
+	// Reconnaissance extras.
+	origins      bool
+	originsAct   bool
+	shodanKey    string
+	censysID     string
+	censysSecret string
+	bypass       bool
 }
 
 func newFlags(cfg *config, stderr io.Writer) *flag.FlagSet {
@@ -77,6 +87,12 @@ func newFlags(cfg *config, stderr io.Writer) *flag.FlagSet {
 	fs.BoolVar(&cfg.noColors, "no-colors", false, "disable ANSI colors (also NO_COLOR env)")
 	fs.BoolVarP(&cfg.quiet, "quiet", "q", false, "do not print the banner")
 	fs.BoolVarP(&cfg.version, "version", "V", false, "print version and exit")
+	fs.BoolVarP(&cfg.origins, "origins", "O", false, "discover candidate origin IPs behind the WAF/CDN (DNS + crt.sh)")
+	fs.BoolVar(&cfg.originsAct, "origins-active", false, "with -O, confirm candidates by connecting to them directly")
+	fs.StringVar(&cfg.shodanKey, "shodan-key", "", "Shodan API key for origin discovery (or SHODAN_API_KEY)")
+	fs.StringVar(&cfg.censysID, "censys-id", "", "Censys API ID for origin discovery (or CENSYS_API_ID)")
+	fs.StringVar(&cfg.censysSecret, "censys-secret", "", "Censys API secret (or CENSYS_API_SECRET)")
+	fs.BoolVarP(&cfg.bypass, "bypass", "X", false, "show documented bypass techniques for detected WAFs (authorized testing only)")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: wafgo [options] url [url ...]\n\nExamples:\n"+
 			"  wafgo https://example.com\n"+
@@ -207,7 +223,27 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return usageErr("%v", err)
 	}
 
-	records, failed := scanAll(ctx, eng, targets, only, max(cfg.concurrency, 1), human, col, log)
+	// Reconnaissance extras are advisory and always visible: when the
+	// machine-readable results go to stdout, print them to stderr.
+	aux := stdout
+	if resultsToStdout {
+		aux = stderr
+	}
+	var finder *origin.Finder
+	if cfg.origins {
+		finder = origin.New(origin.Options{
+			Timeout:      opts.Timeout,
+			Active:       cfg.originsAct,
+			CrtSh:        true,
+			Subdomains:   true,
+			ShodanKey:    firstNonEmpty(cfg.shodanKey, os.Getenv("SHODAN_API_KEY")),
+			CensysID:     firstNonEmpty(cfg.censysID, os.Getenv("CENSYS_API_ID")),
+			CensysSecret: firstNonEmpty(cfg.censysSecret, os.Getenv("CENSYS_API_SECRET")),
+		})
+	}
+
+	ex := extras{finder: finder, bypass: cfg.bypass, aux: aux, col: col}
+	records, failed := scanAll(ctx, eng, targets, only, max(cfg.concurrency, 1), human, col, log, ex)
 
 	if cfg.output != "" || resultsToStdout {
 		out := stdout
@@ -231,10 +267,18 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	return exitOK
 }
 
-// scanAll scans targets with a worker pool. Each target's log block is
+// extras carries the opt-in reconnaissance features.
+type extras struct {
+	finder *origin.Finder // non-nil when origin discovery is enabled
+	bypass bool           // print documented bypass techniques
+	aux    io.Writer      // where extras output goes (stdout, or stderr if results use stdout)
+	col    colors
+}
+
+// scanAll scans targets with a worker pool. Each target's output block is
 // printed atomically as soon as it finishes; records keep input order.
 func scanAll(ctx context.Context, eng *wafgo.Engine, targets []string, only *plugins.Plugin,
-	workers int, human io.Writer, c colors, log *slog.Logger) ([]wafgo.Record, int) {
+	workers int, human io.Writer, c colors, log *slog.Logger, ex extras) ([]wafgo.Record, int) {
 
 	results := make([][]wafgo.Record, len(targets))
 	var (
@@ -248,14 +292,19 @@ func scanAll(ctx context.Context, eng *wafgo.Engine, targets []string, only *plu
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				var buf bytes.Buffer
-				recs, ok := scanOne(ctx, eng, targets[i], only, &buf, c, log)
+				var buf, auxBuf bytes.Buffer
+				recs, ok := scanOne(ctx, eng, targets[i], only, &buf, c, log, ex, &auxBuf)
 				results[i] = recs
 				mu.Lock()
 				if !ok {
 					failed++
 				}
 				_, _ = human.Write(buf.Bytes())
+				if ex.aux == human {
+					_, _ = human.Write(auxBuf.Bytes())
+				} else {
+					_, _ = ex.aux.Write(auxBuf.Bytes())
+				}
 				mu.Unlock()
 			}
 		}()
@@ -279,7 +328,7 @@ feed:
 }
 
 func scanOne(ctx context.Context, eng *wafgo.Engine, raw string, only *plugins.Plugin,
-	w io.Writer, c colors, log *slog.Logger) ([]wafgo.Record, bool) {
+	w io.Writer, c colors, log *slog.Logger, ex extras, aux io.Writer) ([]wafgo.Record, bool) {
 
 	target := wafgo.NormalizeTarget(raw)
 	if target != raw {
@@ -334,7 +383,83 @@ func scanOne(ctx context.Context, eng *wafgo.Engine, raw string, only *plugins.P
 		}
 	}
 	fmt.Fprintf(w, "[~] Number of requests: %d (%s)\n", rep.Requests, time.Since(start).Round(time.Millisecond))
+
+	if ex.finder != nil {
+		renderOrigins(ctx, ex.finder, target, aux, c)
+	}
+	if ex.bypass {
+		renderBypass(rep.WAFs, aux, c)
+	}
 	return rep.Records(), true
+}
+
+func renderOrigins(ctx context.Context, f *origin.Finder, target string, w io.Writer, c colors) {
+	res, err := f.Find(ctx, target)
+	if err != nil {
+		fmt.Fprintf(w, "%s[-] Origin discovery failed for %s: %v%s\n", c.R, target, err, c.E)
+		return
+	}
+	fmt.Fprintf(w, "[+] Origin discovery for %s%s%s (domain %s):\n", c.B, target, c.E, res.Domain)
+	fmt.Fprintf(w, "    Fronted IPs: %s\n", strings.Join(orDash(res.Fronted), ", "))
+	var found bool
+	for _, cand := range res.Candidates {
+		if cand.Fronted {
+			continue
+		}
+		found = true
+		tag := ""
+		switch {
+		case cand.Confirmed:
+			tag = c.G + " [confirmed origin]" + c.E
+		case cand.Note != "":
+			tag = " (" + cand.Note + ")"
+		}
+		hosts := ""
+		if len(cand.Hostnames) > 0 {
+			hosts = " " + strings.Join(cand.Hostnames, ",")
+		}
+		fmt.Fprintf(w, "    %s%-15s%s via %s%s%s\n", c.Y, cand.IP, c.E, strings.Join(cand.Sources, ","), hosts, tag)
+	}
+	if !found {
+		fmt.Fprintln(w, "    No candidate origin IPs distinct from the fronted set were found.")
+	}
+}
+
+func renderBypass(wafs []plugins.Plugin, w io.Writer, c colors) {
+	fmt.Fprintf(w, "%s[!] Bypass guidance is a reference for AUTHORIZED testing only.%s\n", c.R, c.E)
+	for _, p := range wafs {
+		if b, ok := bypass.For(p.Product()); ok {
+			fmt.Fprintf(w, "[+] Documented %s%s%s bypasses:\n", c.C, b.Product, c.E)
+			for _, r := range b.References {
+				fmt.Fprintf(w, "    - %s %s — %s (%s)\n      %s\n", r.Date, r.Vector, r.Summary, r.Credit, r.URL)
+			}
+		}
+	}
+	fmt.Fprintln(w, "[+] General evasion technique categories:")
+	var cat bypass.Category
+	for _, t := range bypass.Techniques() {
+		if t.Category != cat {
+			cat = t.Category
+			fmt.Fprintf(w, "  %s%s%s\n", c.Y, cat, c.E)
+		}
+		fmt.Fprintf(w, "    - %s: %s\n", t.Name, t.Description)
+	}
+}
+
+func orDash(s []string) []string {
+	if len(s) == 0 {
+		return []string{"-"}
+	}
+	return s
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func listWAFs(w io.Writer, format string, c colors) int {
