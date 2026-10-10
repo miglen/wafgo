@@ -1,0 +1,5 @@
+/wafgo
+/dist/
+*.out
+*.test
+.DS_Store
