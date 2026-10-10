@@ -4,7 +4,7 @@
 
 <h1 align="center">wafgo</h1>
 
-<p align="center"><b>Fast Web Application Firewall fingerprinting — a Go port of <a href="https://github.com/EnableSecurity/wafw00f">wafw00f</a>.</b></p>
+<p align="center"><b>Fast Web Application Firewall fingerprinting.</b></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.23+-00ADD8.svg">
@@ -12,166 +12,96 @@
   <img src="https://img.shields.io/badge/signatures-264-blue.svg">
 </p>
 
-`wafgo` identifies which WAF or CDN protects a site, finds candidate origin IPs
-hiding behind it, and points to documented evasion techniques — as a single
-static binary that scans many targets concurrently.
+wafgo tells you which WAF or CDN sits in front of a site, whether it is
+**actively blocking** or just **fronting** the origin, where the **origin IPs**
+might be, and which **bypasses** are known — as one static binary that scans
+many targets concurrently.
 
-It reuses wafw00f's detection logic and signatures (ported automatically, with
-parity tests verifying agreement on the fixture corpus) and adds the WAF
-fingerprints from
-[nuclei-templates](https://github.com/projectdiscovery/nuclei-templates)
-(`waf-detect`, inspired by [WhatWaf](https://github.com/Ekultek/WhatWaf)).
-
-> ⚠️ **Authorized use only.** Fingerprinting, origin discovery and bypass
-> research are for systems you own or have explicit permission to test.
-
-## Features
-
-- **264 WAF/CDN signatures** — 172 from wafw00f + 92 from nuclei, de-duplicated by product.
-- **Fast.** Probe requests for a target run concurrently over reused
-  connections; multiple targets scan in parallel (`-c`). A typical scan is one
-  round-trip of wall-clock time instead of six sequential ones.
-- **CDN vs. enforcing WAF.** Every detection is tagged `actively filtering`
-  (the attack probes were blocked) or `in path only` (fronted by a CDN/proxy
-  such as Cloudflare, but no blocking observed) — so a `cf-ray` header is not
-  mistaken for an enforcing firewall.
-- **Generic detection** — behavioural heuristics when no signature matches.
-- **Active bypass fuzzer** (`--fuzz`) — sends an attack payload and ~11
-  tampered encodings of it at a chosen injection point and reports which
-  variants the WAF lets through. Requires `--authorized-test`.
-- **Origin IP discovery** (`-O`) — DNS, Certificate Transparency (crt.sh),
-  common origin subdomains, and optional Shodan/Censys; optional direct-connect
-  confirmation. Inspired by [cloudbunny](https://github.com/Warflop/cloudbunny).
-- **Bypass reference** (`-X`) — evasion technique categories plus publicly
-  documented, per-WAF bypasses citing
-  [PayloadsAllTheThings](https://github.com/swisskyrepo/PayloadsAllTheThings).
-- **wafw00f-compatible CLI & output** — text, JSON and CSV; file input/output.
-- **Library** — `import "github.com/miglen/wafgo"`.
+> ⚠️ **Authorized use only.** Scan systems you own or have explicit permission to test.
 
 ## Install
 
 ```bash
-go install github.com/miglen/wafgo/cmd/wafgo@latest
+go install github.com/miglen/wafgo/cmd/wafgo@latest   # Go
+docker run --rm miglen/wafgo https://example.com      # Docker (multi-arch)
 ```
-
-Or build from source:
-
-```bash
-git clone https://github.com/miglen/wafgo && cd wafgo
-make build        # produces ./wafgo
-```
-
-Tagged builds upload prebuilt binaries for Linux/macOS/Windows as artifacts on
-the [release workflow runs](https://github.com/miglen/wafgo/actions/workflows/release.yml).
-Download them from a successful run while the artifacts are retained.
 
 ## Usage
 
 ```bash
 wafgo https://example.com                 # fingerprint one site
-wafgo -a example.com example.org          # find every matching WAF
-wafgo -i targets.txt -f json > out.json   # many targets, JSON to stdout
+wafgo -a -i targets.txt -f json           # many targets, every match, JSON
+wafgo -O -X https://example.com           # + origin IPs + known bypasses
 wafgo -l                                  # list detectable WAFs
 ```
 
-Identify the WAF, its origin, and documented bypasses in one run:
-
-```bash
-wafgo -a -O -X https://example.com
 ```
-
-```
-[*] Checking https://example.com
 [+] The site https://example.com is behind Cloudflare (Cloudflare Inc.) WAF.
-[+] Origin discovery for https://example.com (domain example.com):
-    Fronted IPs: 104.16.132.229, 104.16.133.229
-    203.0.113.10   via host:staging.example.com staging.example.com [confirmed origin]
-[+] Documented Cloudflare bypasses:
-    - 2021-01-25 Reflected XSS — SVG/animate-based vector ... (@bohdansec)
+    ↳ actively filtering — attack probe returned a block (HTTP 403 vs normal 200)
 ```
 
-See [docs/USAGE.md](docs/USAGE.md) for every flag and output format, and
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how detection and the code
-generators work.
+Full flags in [docs/USAGE.md](docs/USAGE.md); design in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-### Origin discovery
+## How it compares
 
-`-O` gathers candidate origin IPs without touching the target's WAF; add
-`--origins-active` to confirm a candidate by connecting to it directly (with the
-original `Host`/SNI) and comparing the response to the fronted site. Shodan and
-Censys are used when credentials are supplied via flags or the
-`SHODAN_API_KEY`, `CENSYS_API_ID` and `CENSYS_API_SECRET` environment variables.
+|                              | **wafgo** | wafw00f | WhatWaf | nuclei `waf-detect` | cloudbunny |
+|------------------------------|:---------:|:-------:|:-------:|:-------------------:|:----------:|
+| WAF/CDN signatures           | **264**   | 172     | 89      | ~92                 | –          |
+| Concurrent multi-target      | ✅        | ❌      | partial | ✅                  | n/a        |
+| CDN vs. *enforcing* WAF      | ✅        | ❌      | ❌      | ❌                  | ❌         |
+| Behavioural (generic) detect | ✅        | ✅      | ✅      | ❌                  | ❌         |
+| Origin-IP discovery          | ✅        | ❌      | ❌      | ❌                  | ✅         |
+| Active bypass fuzzer         | ✅ (11)   | ❌      | ✅ (36) | ❌                  | ❌         |
+| JSON / CSV output            | ✅        | ✅      | ✅      | ✅                  | ❌         |
+| Single static binary         | ✅        | ❌      | ❌      | ✅                  | ❌         |
+| Go library API               | ✅        | ❌      | ❌      | ✅                  | ❌         |
 
-### Bypass reference
+**Where the others go further:** nuclei is a general-purpose scanner (thousands
+of templates beyond WAFs); WhatWaf ships a larger tamper-script library (36 vs.
+our 11) and an arbitrary-payload encoder; cloudbunny adds ZoomEye as an origin
+source. wafgo is WAF-focused and folds the most useful parts of each into one
+fast tool.
 
-`-X` prints, for each detected WAF, the publicly documented bypasses (with
-credit and a link to the primary source) plus a catalog of general evasion
-technique *categories*. The `-X` reference prints descriptions and citations
-without sending additional requests. Fingerprinting and the opt-in `--fuzz`
-feature send probe traffic.
+## Benchmark
 
-## Docker
+Scanning the **same 123 live hosts**, single run, same machine:
 
-Pull the published multi-arch image (linux/amd64 and linux/arm64) from Docker Hub:
+| Tool | Time | Detected | Notes |
+|------|-----:|:--------:|-------|
+| **wafgo `-c 50`** | **7.2 s** | 121 | concurrent |
+| **wafgo `-c 10`** (default) | **14.7 s** | 121 | concurrent |
+| nuclei `waf-detect` | 10.4 s | 86 | 1 request/host, fewer signatures |
+| wafw00f | 223.9 s | 116 | sequential — **~15–31× slower** |
+| WhatWaf `--skip` | did not finish in 13.5 min | – | sequential |
 
-```bash
-docker run --rm miglen/wafgo https://example.com
-docker run --rm miglen/wafgo -a -f json https://example.com
-```
-
-Or build it yourself:
-
-```bash
-docker build -t wafgo .
-docker run --rm wafgo https://example.com
-```
-
-The image is built `FROM scratch` (static binary, non-root, CA roots included),
-so it is only a few megabytes and has no shell or OS packages.
+wafgo is **~15–31× faster than wafw00f** and finishes where WhatWaf does not,
+while doing *more* per host than nuclei (two probes, 264 signatures, the
+CDN-vs-WAF verdict, and generic fallback). Agreement with wafw00f on whether a
+host has a WAF is **95.8%**; on the specific product wafgo matches or is *more
+specific* on ~98% of hosts (it names the WAF where wafw00f reports "Generic").
+Live, network-bound numbers — expect a few seconds of variance.
 
 ## Library
 
 ```go
-package main
-
-import (
-	"context"
-	"fmt"
-
-	"github.com/miglen/wafgo"
-)
-
-func main() {
-	eng, err := wafgo.New(wafgo.Options{FindAll: true})
-	if err != nil {
-		panic(err)
-	}
-	rep, err := eng.Scan(context.Background(), "https://example.com")
-	if err != nil {
-		panic(err)
-	}
+eng, _ := wafgo.New(wafgo.Options{FindAll: true})
+rep, err := eng.Scan(context.Background(), "https://example.com")
+if err == nil {
 	for _, w := range rep.WAFs {
-		fmt.Println(w.Name)
+		fmt.Printf("%s — %s\n", w.Name, rep.Enforcement)
 	}
 }
 ```
 
-## Updating signatures
+## References
 
-Signatures are generated, never hand-edited. With a local wafw00f checkout:
+wafgo stands on prior work and reuses or cites, under their licenses:
+[wafw00f](https://github.com/EnableSecurity/wafw00f) (signatures & detection
+logic), [nuclei-templates](https://github.com/projectdiscovery/nuclei-templates)
+(`waf-detect` signatures), [WhatWaf](https://github.com/Ekultek/WhatWaf) and
+[PayloadsAllTheThings](https://github.com/swisskyrepo/PayloadsAllTheThings)
+(bypass reference), [cloudbunny](https://github.com/Warflop/cloudbunny) (origin
+discovery). Signatures are generated, never hand-edited — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-```bash
-make generate WAFW00F_SRC=/path/to/wafw00f
-```
-
-This re-runs the translators (`tools/py2go`, `tools/parity`, `tools/nuclei2go`)
-and the test suite. The nuclei input lives at
-[`testdata/nuclei-waf-detect.yaml`](testdata/nuclei-waf-detect.yaml).
-
-## Credits & license
-
-`wafgo` is BSD 3-Clause licensed (see [LICENSE](LICENSE)). Detection logic and
-signatures derive from **wafw00f** by Enable Security (BSD 3-Clause) and from
-**nuclei-templates** by ProjectDiscovery. Origin discovery is inspired by
-**cloudbunny**; the bypass reference cites **WhatWaf** and
-**PayloadsAllTheThings**. All trademarks belong to their owners.
+BSD 3-Clause licensed (see [LICENSE](LICENSE)). Trademarks belong to their owners.

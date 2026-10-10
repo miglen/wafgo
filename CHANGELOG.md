@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Rewrote the README as a standalone project page with a capability comparison
+  table and a 123-host benchmark; added a Docker Hub overview (docs/DOCKER_HUB.md).
 - Published multi-arch Docker image `miglen/wafgo` (linux/amd64, linux/arm64) on Docker Hub.
 - Add a wafgo banner to the README.
 
