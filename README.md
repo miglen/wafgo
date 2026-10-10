@@ -56,8 +56,9 @@ git clone https://github.com/miglen/wafgo && cd wafgo
 make build        # produces ./wafgo
 ```
 
-Prebuilt binaries for Linux/macOS/Windows are attached to each
-[release](https://github.com/miglen/wafgo/releases).
+Tagged builds upload prebuilt binaries for Linux/macOS/Windows as artifacts on
+the [release workflow runs](https://github.com/miglen/wafgo/actions/workflows/release.yml).
+Download them from a successful run while the artifacts are retained.
 
 ## Usage
 
@@ -100,8 +101,9 @@ Censys are used when credentials are supplied via flags or the
 
 `-X` prints, for each detected WAF, the publicly documented bypasses (with
 credit and a link to the primary source) plus a catalog of general evasion
-technique *categories*. wafgo describes techniques and cites research; it does
-not generate or send attack traffic.
+technique *categories*. The `-X` reference prints descriptions and citations
+without sending additional requests. Fingerprinting and the opt-in `--fuzz`
+feature send probe traffic.
 
 ## Docker
 

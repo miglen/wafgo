@@ -7,6 +7,10 @@ wafgo [options] url [url ...]
 Targets may be given on the command line, with `-i`, or both. A target without
 a scheme is treated as `https://`.
 
+JSON input files must contain one array of objects with a `url` field. Trailing
+whitespace is allowed; additional JSON documents or other trailing data are
+rejected with an input error.
+
 ## Options
 
 | Flag | Long | Description |
@@ -74,6 +78,13 @@ The human-readable progress log always prints to stdout (unless results are sent
 to stdout, in which case it moves aside). Machine-readable results are selected
 with `-f`/`-o`.
 
+File output is written to a temporary file in the destination directory, synced
+and closed, then renamed into place. A failed write leaves an existing report
+intact. New reports use owner-only permissions (`0600`); replacing a regular file
+preserves its permission bits. Symbolic links and special files are rejected as
+output destinations; use `-o -` for stdout. Replacing a file requires write access
+to its directory. Rename atomicity depends on the operating system.
+
 **text** (default) — right-aligned columns of URL, `Firewall (Manufacturer)` and
 trigger URL.
 
@@ -99,7 +110,7 @@ wafw00f's, so existing tooling keeps working.
 | Code | Meaning |
 |------|---------|
 | `0` | Completed; results written. (Detection of a WAF is not an error.) |
-| `1` | A target could not be scanned, or a file/flag error occurred. |
+| `1` | A target could not be scanned, or an input/output operation failed. |
 | `2` | Usage error (bad flags, no target, unknown `--test` WAF). |
 
 ## Examples

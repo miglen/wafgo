@@ -1,4 +1,11 @@
 .git
+# Keep local credentials out of the build context.
+**/.env
+**/.env.*
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
 dist
 *.md
 !README.md

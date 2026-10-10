@@ -122,7 +122,18 @@ func newFlags(cfg *config, stderr io.Writer) *flag.FlagSet {
 	return fs
 }
 
-func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	terminal := isTerminal(stdout)
+	outErrors := &checkedWriter{w: stdout}
+	errErrors := &checkedWriter{w: stderr}
+	stdout, stderr = outErrors, errErrors
+	defer func() {
+		if err := errors.Join(outErrors.Err(), errErrors.Err()); err != nil && code == exitOK {
+			fmt.Fprintf(stderr, "wafgo: writing output: %v\n", err)
+			code = exitError
+		}
+	}()
+
 	var cfg config
 	fs := newFlags(&cfg, stderr)
 	if err := fs.Parse(args); err != nil {
@@ -168,7 +179,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if resultsToStdout {
 		human = io.Discard
 	}
-	col := newColors(!cfg.noColors && os.Getenv("NO_COLOR") == "" && isTerminal(stdout))
+	col := newColors(!cfg.noColors && os.Getenv("NO_COLOR") == "" && terminal)
 
 	if cfg.version {
 		fmt.Fprintf(stdout, "wafgo %s (signatures from wafw00f %s)\nLicensed under the BSD 3-Clause license.\n",
@@ -286,17 +297,15 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	records, failed := scanAll(ctx, eng, targets, only, max(cfg.concurrency, 1), human, col, log, ex)
 
 	if cfg.output != "" || resultsToStdout {
-		out := stdout
-		if !resultsToStdout {
-			f, err := os.Create(cfg.output)
-			if err != nil {
-				fmt.Fprintf(stderr, "wafgo: %v\n", err)
-				return exitError
-			}
-			defer f.Close()
-			out = f
+		var err error
+		if resultsToStdout {
+			err = wafgo.WriteRecords(stdout, format, records)
+		} else {
+			err = writeFileAtomic(cfg.output, func(w io.Writer) error {
+				return wafgo.WriteRecords(w, format, records)
+			})
 		}
-		if err := wafgo.WriteRecords(out, format, records); err != nil {
+		if err != nil {
 			fmt.Fprintf(stderr, "wafgo: writing results: %v\n", err)
 			return exitError
 		}

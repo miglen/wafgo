@@ -110,7 +110,8 @@ func FormatFromPath(path string) Format {
 	return FormatText
 }
 
-// WriteRecords writes records in the given format.
+// WriteRecords writes records in the given format. Unsupported formats return
+// an error without writing anything.
 func WriteRecords(w io.Writer, f Format, recs []Record) error {
 	switch f {
 	case FormatJSON:
@@ -133,13 +134,15 @@ func WriteRecords(w io.Writer, f Format, recs []Record) error {
 		}
 		cw.Flush()
 		return cw.Error()
-	default:
+	case FormatText:
 		for _, line := range TextLines(recs) {
 			if _, err := fmt.Fprintln(w, line); err != nil {
 				return err
 			}
 		}
 		return nil
+	default:
+		return fmt.Errorf("unknown format %q (want json, csv or text)", f)
 	}
 }
 
@@ -200,14 +203,23 @@ func ReadHeadersFile(path string) (http.Header, error) {
 // ReadTargets reads targets in the format implied by name: a JSON array of
 // objects with a "url" key (.json), a CSV file with a "url" column (.csv),
 // or one URL per line. Blank lines and '#' comments are skipped.
+// JSON input must contain exactly one document followed only by whitespace.
 func ReadTargets(r io.Reader, name string) ([]string, error) {
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".json":
 		var items []struct {
 			URL string `json:"url"`
 		}
-		if err := json.NewDecoder(r).Decode(&items); err != nil {
+		dec := json.NewDecoder(r)
+		if err := dec.Decode(&items); err != nil {
 			return nil, fmt.Errorf("%s: not well-formed JSON: %w", name, err)
+		}
+		var extra json.RawMessage
+		if err := dec.Decode(&extra); err != io.EOF {
+			if err != nil {
+				return nil, fmt.Errorf("%s: invalid data after JSON array: %w", name, err)
+			}
+			return nil, fmt.Errorf("%s: expected a single JSON array", name)
 		}
 		var out []string
 		for _, it := range items {

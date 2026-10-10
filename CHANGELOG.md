@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Preserve existing report files when saving fails, and report CLI output
+  failures through the exit status, including short writes and file-close errors.
+- Reject trailing data and read errors after a JSON target array.
+- Correct binary download instructions to point to release workflow artifacts.
+
+### Changed
+- `WriteRecords` requires a supported format; library callers must pass
+  `FormatText` explicitly instead of relying on an empty or invalid format.
+- New report files use owner-only permissions (`0600`). Replacements retain
+  existing permission bits; symbolic links and special output files are rejected.
+- Restrict CI and release workflow tokens to read-only repository permissions
+  and exclude common credential files from Docker build contexts.
+
 ## [0.1.0]
 
 Initial release — a fast Go port of [wafw00f](https://github.com/EnableSecurity/wafw00f).
