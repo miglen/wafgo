@@ -1,0 +1,40 @@
+version: "2"
+
+run:
+  modules-download-mode: readonly
+  timeout: 3m
+
+linters:
+  default: standard
+  enable:
+    - revive
+    - nolintlint
+    - errorlint
+  settings:
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    generated: strict
+    warn-unused: true
+    rules:
+      # run checks output failures through checkedWriter; render helpers write
+      # to that wrapper or an in-memory buffer. Keep other fmt calls checked.
+      - path: ^cmd/wafgo/main\.go$
+        linters: [errcheck]
+        text: 'Error return value of `fmt\.F(print|printf|println)` is not checked'
+        source: '^\s*fmt\.F(print|printf|println)\((stdout|stderr|human|w),'
+      # These deferred closes only release read handles after input processing.
+      # Output-file close errors remain checked separately.
+      - path: ^(cmd/wafgo/main|output)\.go$
+        linters: [errcheck]
+        text: 'Error return value of `f\.Close` is not checked'
+        source: '^\s*defer f\.Close\(\)$'
+      - path: ^(engine|origin/origin)\.go$
+        linters: [errcheck]
+        text: 'Error return value of `resp\.Body\.Close` is not checked'
+        source: '^\s*defer resp\.Body\.Close\(\)$'
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

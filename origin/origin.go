@@ -319,7 +319,7 @@ type fingerprint struct {
 // request reaches a specific server directly.
 func (f *Finder) fingerprint(ctx context.Context, rawURL, host, ip string) (fingerprint, bool) {
 	tr := &http.Transport{
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true, ServerName: host}, //nolint:gosec
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true, ServerName: host}, //nolint:gosec // This diagnostic request intentionally accepts untrusted certificates.
 		DisableKeepAlives: true,
 	}
 	if ip != "" {

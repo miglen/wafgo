@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -86,6 +88,67 @@ func TestCLIRejectsMalformedJSONBeforeProcessingTargets(t *testing.T) {
 	}
 	if out != "" {
 		t.Fatalf("unexpected target processing output: %q", out)
+	}
+}
+
+func TestCLITargetFailuresReachStderr(t *testing.T) {
+	const target = "http://["
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		format string
+	}{
+		{"JSON", []string{"-f", "json"}, "json"},
+		{"CSV", []string{"-f", "csv"}, "csv"},
+		{"stdout", []string{"-o", "-"}, "text"},
+		{"JSON stdout", []string{"-o", "-", "-f", "json"}, "json"},
+		{"CSV stdout", []string{"-o", "-", "-f", "csv"}, "csv"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"-q"}, tc.args...)
+			out, stderr, code := runCLI(t, append(args, target)...)
+			if code != exitError {
+				t.Fatalf("code=%d, want %d", code, exitError)
+			}
+			if !strings.Contains(stderr, target) || !strings.Contains(stderr, "invalid target URL") {
+				t.Fatalf("stderr=%q; want target and parsing error", stderr)
+			}
+			switch tc.format {
+			case "json":
+				var records []json.RawMessage
+				if err := json.Unmarshal([]byte(out), &records); err != nil || records == nil || len(records) != 0 {
+					t.Fatalf("output=%q err=%v; want an empty JSON array", out, err)
+				}
+			case "csv":
+				rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+				if err != nil || len(rows) != 1 || rows[0][0] != "url" {
+					t.Fatalf("output=%q err=%v; want CSV with only the header", out, err)
+				}
+			case "text":
+				if out != "" {
+					t.Fatalf("output=%q; want no records", out)
+				}
+			}
+		})
+	}
+}
+
+func TestCLITargetFailureWithUnavailableDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		w    io.Writer
+	}{
+		{"write error", failingWriter{errors.New("stderr unavailable")}},
+		{"short write", shortWriter{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			code := run(context.Background(), []string{"-q", "-f", "json", "http://["},
+				strings.NewReader(""), &out, tc.w)
+			if code != exitError || out.String() != "[]\n" {
+				t.Fatalf("code=%d output=%q; want failed status and empty JSON array", code, out.String())
+			}
+		})
 	}
 }
 

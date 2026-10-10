@@ -3,3 +3,6 @@
 *.out
 *.test
 .DS_Store
+# Keep local tool state out of version control; retain CI workflows.
+/.*/
+!/.github/

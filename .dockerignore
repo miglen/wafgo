@@ -1,4 +1,5 @@
-.git
+# Exclude repository metadata and local tool state.
+.*
 # Keep local credentials out of the build context.
 **/.env
 **/.env.*

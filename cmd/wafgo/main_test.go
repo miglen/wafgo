@@ -105,7 +105,7 @@ func TestUnknownTestWAF(t *testing.T) {
 
 // frontedOnly mimics a CDN (Cloudflare header) that does NOT block attacks.
 func frontedOnly() *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Server", "cloudflare")
 		w.Header().Set("CF-RAY", "abc123-LAX")
 		_, _ = w.Write([]byte("<html><title>home</title></html>"))
@@ -156,12 +156,10 @@ func TestBannerContainsIdentity(t *testing.T) {
 func TestConcurrentMultiTargetKeepsOrderAndCount(t *testing.T) {
 	// Several fake targets scanned with concurrency > 1 must all appear, in
 	// input order, once each.
-	var srvs []*httptest.Server
 	var urls []string
 	for i := 0; i < 6; i++ {
 		s := frontedOnly()
 		defer s.Close()
-		srvs = append(srvs, s)
 		urls = append(urls, s.URL)
 	}
 	args := append([]string{"-q", "-c", "6", "-f", "json"}, urls...)

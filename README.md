@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/wafgo-banner.png" alt="wafgo — Web Application Firewall fingerprinting" width="100%">
+</p>
+
 <h1 align="center">wafgo</h1>
 
 <p align="center"><b>Fast Web Application Firewall fingerprinting — a Go port of <a href="https://github.com/EnableSecurity/wafw00f">wafw00f</a>.</b></p>
@@ -13,7 +17,8 @@ hiding behind it, and points to documented evasion techniques — as a single
 static binary that scans many targets concurrently.
 
 It reuses wafw00f's detection logic and signatures (ported automatically, with
-a parity test proving identical results) and adds the WAF fingerprints from
+parity tests verifying agreement on the fixture corpus) and adds the WAF
+fingerprints from
 [nuclei-templates](https://github.com/projectdiscovery/nuclei-templates)
 (`waf-detect`, inspired by [WhatWaf](https://github.com/Ekultek/WhatWaf)).
 
@@ -137,7 +142,10 @@ import (
 )
 
 func main() {
-	eng, _ := wafgo.New(wafgo.Options{FindAll: true})
+	eng, err := wafgo.New(wafgo.Options{FindAll: true})
+	if err != nil {
+		panic(err)
+	}
 	rep, err := eng.Scan(context.Background(), "https://example.com")
 	if err != nil {
 		panic(err)

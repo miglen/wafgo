@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"regexp"
 	"regexp/syntax"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -86,8 +88,8 @@ func splitName(name string) (string, string) {
 var (
 	registry = map[string]Plugin{}
 	extra    []Plugin // nuclei and other supplementary sources
-	core     []Plugin // wafw00f, in priority order; cached
-	ordered  []Plugin // core + extra; cached
+	core     = sync.OnceValue(buildCore)
+	ordered  = sync.OnceValue(buildAll)
 )
 
 // register adds a wafw00f signature. It is called from init functions only.
@@ -95,7 +97,7 @@ func register(id, name string, detect func(Matcher) bool) {
 	add(Plugin{ID: id, Name: name, Source: SourceWafw00f, Detect: detect})
 }
 
-// registerExtra adds a supplementary signature (e.g. nuclei).
+// registerExtra adds a supplementary signature (e.g. nuclei) during init only.
 func registerExtra(id, name string, source Source, detect func(Matcher) bool) {
 	add(Plugin{ID: id, Name: name, Source: source, Detect: detect})
 }
@@ -105,21 +107,21 @@ func add(p Plugin) {
 		panic("plugins: duplicate plugin id " + p.ID)
 	}
 	registry[p.ID] = p
-	if p.Source == SourceWafw00f {
-		core = nil
-	} else {
+	if p.Source != SourceWafw00f {
 		extra = append(extra, p)
 	}
-	ordered = nil
 }
 
 // Core returns only the wafw00f signatures, in the upstream priority order
 // followed by any remaining ones sorted by name. This is the set the parity
-// tests pin against.
+// tests pin against. The returned slice is a copy and may be modified by the
+// caller.
 func Core() []Plugin {
-	if core != nil {
-		return core
-	}
+	return slices.Clone(core())
+}
+
+// buildCore runs once, after init has finished registering signatures.
+func buildCore() []Plugin {
 	byName := make(map[string]Plugin)
 	for _, p := range registry {
 		if p.Source == SourceWafw00f {
@@ -141,20 +143,21 @@ func Core() []Plugin {
 		}
 	}
 	sort.Slice(rest, func(i, j int) bool { return rest[i].Name < rest[j].Name })
-	core = append(out, rest...)
-	return core
+	return append(out, rest...)
 }
 
 // All returns every signature in check order: the wafw00f set first, then the
-// supplementary (nuclei) signatures sorted by name.
+// supplementary (nuclei) signatures sorted by name. The returned slice is a
+// copy and may be modified by the caller.
 func All() []Plugin {
-	if ordered != nil {
-		return ordered
-	}
+	return slices.Clone(ordered())
+}
+
+// buildAll runs once and keeps the cached slices private to the registry.
+func buildAll() []Plugin {
 	rest := append([]Plugin(nil), extra...)
 	sort.Slice(rest, func(i, j int) bool { return rest[i].Name < rest[j].Name })
-	ordered = append(append([]Plugin(nil), Core()...), rest...)
-	return ordered
+	return append(Core(), rest...)
 }
 
 // Lookup finds a plugin by ID, full name or product name (case-insensitive).

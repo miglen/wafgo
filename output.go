@@ -202,7 +202,8 @@ func ReadHeadersFile(path string) (http.Header, error) {
 
 // ReadTargets reads targets in the format implied by name: a JSON array of
 // objects with a "url" key (.json), a CSV file with a "url" column (.csv),
-// or one URL per line. Blank lines and '#' comments are skipped.
+// or one URL per line. JSON null is accepted as an empty target list.
+// Plain-text input skips blank lines and lines starting with '#'.
 // JSON input must contain exactly one document followed only by whitespace.
 func ReadTargets(r io.Reader, name string) ([]string, error) {
 	switch strings.ToLower(filepath.Ext(name)) {

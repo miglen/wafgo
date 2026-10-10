@@ -9,6 +9,7 @@
 //	eng, err := wafgo.New(wafgo.Options{})
 //	if err != nil { ... }
 //	rep, err := eng.Scan(ctx, "https://example.com")
+//	if err != nil { ... }
 //	for _, w := range rep.WAFs { fmt.Println(w.Name) }
 package wafgo
 
@@ -78,13 +79,15 @@ type Options struct {
 	// standard HTTP_PROXY / HTTPS_PROXY / NO_PROXY variables are honoured.
 	Proxy string
 	// Headers replaces the default header set when non-nil (as wafw00f -H does).
+	// New copies the map and its values.
 	Headers http.Header
 	// FindAll keeps checking after the first matching signature and always
 	// runs the generic detection.
 	FindAll bool
 	// MaxBodySize caps how many body bytes are read. Zero means MaxResponseSize.
 	MaxBodySize int64
-	// Transport overrides the HTTP transport (mainly for tests).
+	// Transport overrides the HTTP transport (mainly for tests). It is shared,
+	// not copied, and must be safe for concurrent use.
 	Transport http.RoundTripper
 }
 
@@ -104,10 +107,11 @@ func New(opts Options) (*Engine, error) {
 	if opts.MaxBodySize <= 0 {
 		opts.MaxBodySize = MaxResponseSize
 	}
-	headers := opts.Headers
+	headers := opts.Headers.Clone()
 	if headers == nil {
 		headers = DefaultHeaders()
 	}
+	opts.Headers = headers
 
 	rt := opts.Transport
 	if rt == nil {
@@ -155,8 +159,14 @@ func New(opts Options) (*Engine, error) {
 	return &Engine{opts: opts, client: client, headers: headers}, nil
 }
 
-// Options returns the effective options.
-func (e *Engine) Options() Options { return e.opts }
+// Options returns a copy of the configuration with timeout, body-size and
+// header defaults applied. A custom Transport remains shared; nil means the
+// engine created its own transport.
+func (e *Engine) Options() Options {
+	opts := e.opts
+	opts.Headers = e.headers.Clone()
+	return opts
+}
 
 // Headers returns a copy of the header set sent with every request.
 func (e *Engine) Headers() http.Header { return e.headers.Clone() }

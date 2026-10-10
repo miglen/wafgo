@@ -8,12 +8,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 - Published multi-arch Docker image `miglen/wafgo` (linux/amd64, linux/arm64) on Docker Hub.
+- Add a wafgo banner to the README.
 
 ### Fixed
 - Preserve existing report files when saving fails, and report CLI output
   failures through the exit status, including short writes and file-close errors.
 - Reject trailing data and read errors after a JSON target array.
 - Correct binary download instructions to point to release workflow artifacts.
+- Initialize plugin registry caches safely under concurrent access and return
+  independent slices to callers.
+- Copy engine headers on construction and return independent header snapshots.
+- Report target failures on stderr when result records are written to stdout.
 
 ### Changed
 - `WriteRecords` requires a supported format; library callers must pass
@@ -22,6 +27,9 @@ All notable changes to this project are documented here. The format follows
   existing permission bits; symbolic links and special output files are rejected.
 - Restrict CI and release workflow tokens to read-only repository permissions
   and exclude common credential files from Docker build contexts.
+- Add pinned lint checks and align the Go toolchain across local builds, CI,
+  releases, and Docker.
+- Clarify API ownership comments, examples, and the scope of parity tests.
 
 ## [0.1.0]
 

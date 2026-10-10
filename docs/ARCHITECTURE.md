@@ -35,12 +35,13 @@ wafw00f's `None` responses.
 The 172 wafw00f plugins are tiny declarative functions. `tools/py2go` parses
 each with Python's `ast` module (never executing it) and emits an equivalent Go
 function into `plugins/<id>_gen.go`. Anything the translator does not understand
-aborts generation, so a silent mistranslation cannot happen. The priority order
+aborts generation. Parity tests check the translated behavior against the fixture
+corpus; they do not prove equivalence for every possible input. The priority order
 from `wafprio.py` becomes `plugins/priority_gen.go`.
 
 `tools/nuclei2go` converts the nuclei `waf-detect` matchers into
 `plugins/nuclei_gen.go` as supplementary signatures (`Source: nuclei`). These
-are kept separate from the wafw00f set so the parity guarantee is unaffected.
+are kept separate from the wafw00f set so the parity comparison covers the same set.
 
 ### Signature sets
 

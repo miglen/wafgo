@@ -4,7 +4,12 @@ PKG         := github.com/miglen/wafgo
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS     := -s -w -X $(PKG).Version=$(VERSION)
 GOFLAGS     := -trimpath
+# Pin builds without raising the module's minimum supported Go version.
+GOTOOLCHAIN ?= go1.27.2
+export GOTOOLCHAIN
 WAFW00F_SRC ?= ../wafw00f   # checkout of EnableSecurity/wafw00f for `make generate`
+GOLANGCI_LINT ?= golangci-lint
+GOLANGCI_LINT_VERSION := 2.14.0
 
 .DEFAULT_GOAL := build
 
@@ -38,8 +43,11 @@ fmt: ## Format the code
 	gofmt -w .
 
 .PHONY: lint
-lint: vet ## Lint (vet + gofmt check)
+lint: ## Check formatting and run the pinned golangci-lint version
 	@test -z "$$(gofmt -l . | tee /dev/stderr)" || (echo "run 'make fmt'"; exit 1)
+	@test "$$('$(GOLANGCI_LINT)' version --short 2>/dev/null)" = "$(GOLANGCI_LINT_VERSION)" || \
+	  (echo "golangci-lint v$(GOLANGCI_LINT_VERSION) is required; install from https://golangci-lint.run/docs/welcome/install/local/" >&2; exit 1)
+	'$(GOLANGCI_LINT)' run ./...
 
 .PHONY: generate
 generate: ## Regenerate signatures from upstream (set WAFW00F_SRC=/path/to/wafw00f)

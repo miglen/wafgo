@@ -196,10 +196,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 	var targets []string
 	if cfg.input != "" {
-		var (
-			r    io.Reader = stdin
-			name           = "stdin.txt"
-		)
+		r, name := stdin, "stdin.txt"
 		if cfg.input != "-" {
 			f, err := os.Open(cfg.input)
 			if err != nil {
@@ -397,11 +394,7 @@ func scanOne(ctx context.Context, eng *wafgo.Engine, raw string, only *plugins.P
 		rep, err = eng.Scan(ctx, target)
 	}
 	if err != nil {
-		if errors.Is(err, wafgo.ErrSiteDown) {
-			fmt.Fprintf(w, "%s[-] Site %s appears to be down%s\n", c.R, target, c.E)
-		} else {
-			fmt.Fprintf(w, "%s[-] %s: %v%s\n", c.R, target, err, c.E)
-		}
+		log.Error("could not scan target", "target", target, "error", err)
 		return nil, false
 	}
 
@@ -596,8 +589,7 @@ func listWAFs(w io.Writer, format string, c colors) int {
 }
 
 func banner(c colors) string {
-	// Figlet "Slant" wafgo. Backticks and backslashes are escaped for a
-	// double-quoted string.
+	// Figlet "Slant" wafgo. Backslashes are escaped for a double-quoted string.
 	art := "" +
 		"                 ____\n" +
 		" _      ______ _/ __/___ _____\n" +
