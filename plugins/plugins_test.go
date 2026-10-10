@@ -23,9 +23,24 @@ func TestPluginsHaveNameAndDetect(t *testing.T) {
 		if p.Detect == nil {
 			t.Errorf("plugin %s has no Detect function", p.ID)
 		}
+		if p.Source == "" {
+			t.Errorf("plugin %s has no Source", p.ID)
+		}
+	}
+	// wafw00f names carry the manufacturer in parentheses.
+	for _, p := range Core() {
 		if p.Product() == "" || p.Manufacturer() == "" {
 			t.Errorf("plugin %s name %q is not in \"Product (Manufacturer)\" form", p.ID, p.Name)
 		}
+	}
+}
+
+func TestCoreCountStable(t *testing.T) {
+	if got := len(Core()); got != 172 {
+		t.Fatalf("expected 172 wafw00f signatures, got %d", got)
+	}
+	if len(All()) <= len(Core()) {
+		t.Fatal("expected supplementary (nuclei) signatures on top of core")
 	}
 }
 

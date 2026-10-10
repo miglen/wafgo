@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 
@@ -86,6 +87,45 @@ func (s *Site) MatchReason(reason string, attack bool) bool {
 	return r != nil && r.Reason == reason
 }
 
+// MatchHeaderBlob implements plugins.Matcher.
+func (s *Site) MatchHeaderBlob(p *plugins.Pattern, attack bool) bool {
+	r := s.pick(attack)
+	return r != nil && p.MatchString(r.headerBlob())
+}
+
+// MatchResponseBlob implements plugins.Matcher.
+func (s *Site) MatchResponseBlob(p *plugins.Pattern, attack bool) bool {
+	r := s.pick(attack)
+	if r == nil {
+		return false
+	}
+	if p.MatchString(r.headerBlob()) {
+		return true
+	}
+	return p.Match(r.Text())
+}
+
+// headerBlob renders the response headers as sorted "Name: value" lines, so
+// nuclei header/response matchers see a stable, full header view.
+func (r *Response) headerBlob() string {
+	names := make([]string, 0, len(r.Header))
+	for name := range r.Header {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	fmt.Fprintf(&b, "HTTP %d %s\r\n", r.StatusCode, r.Reason)
+	for _, name := range names {
+		for _, v := range r.Header[name] {
+			b.WriteString(name)
+			b.WriteString(": ")
+			b.WriteString(v)
+			b.WriteString("\r\n")
+		}
+	}
+	return b.String()
+}
+
 // Text returns the body prepared for signature matching. Responses returned
 // by Engine.Do have it precomputed; for hand-built responses it is computed
 // on first use (not safe for concurrent first use).
@@ -96,16 +136,25 @@ func (r *Response) Text() *plugins.Text {
 	return r.text
 }
 
-// Identify runs the signatures against site in priority order. Unless
-// findAll is set it stops at the first match.
+// Identify runs the signatures against site in priority order. Unless findAll
+// is set it stops at the first match. When findAll is set, a WAF detected by
+// more than one source (e.g. both wafw00f and nuclei) is reported once, by the
+// first signature that matched.
 func Identify(site *Site, findAll bool) []plugins.Plugin {
 	var found []plugins.Plugin
+	seen := map[string]bool{}
 	for _, p := range plugins.All() {
-		if p.Detect(site) {
-			found = append(found, p)
-			if !findAll {
-				break
-			}
+		if !p.Detect(site) {
+			continue
+		}
+		key := strings.ToLower(p.Product())
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		found = append(found, p)
+		if !findAll {
+			break
 		}
 	}
 	return found

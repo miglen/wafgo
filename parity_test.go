@@ -51,7 +51,7 @@ func TestParityWithUpstream(t *testing.T) {
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(plugins.All()); got != fixture.UpstreamPlugins {
+	if got := len(plugins.Core()); got != fixture.UpstreamPlugins {
 		t.Fatalf("have %d plugins, upstream fixture has %d", got, fixture.UpstreamPlugins)
 	}
 	if len(fixture.Cases) < 1000 {
@@ -60,7 +60,7 @@ func TestParityWithUpstream(t *testing.T) {
 	for _, c := range fixture.Cases {
 		site := &Site{Normal: c.Normal.toResponse(), Attack: c.Attack.toResponse()}
 		var got []string
-		for _, p := range plugins.All() {
+		for _, p := range plugins.Core() {
 			if p.Detect(site) {
 				got = append(got, p.Name)
 			}

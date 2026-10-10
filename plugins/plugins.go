@@ -31,7 +31,22 @@ type Matcher interface {
 	MatchStatus(code int, attack bool) bool
 	// MatchReason reports whether the HTTP reason phrase equals reason.
 	MatchReason(reason string, attack bool) bool
+	// MatchHeaderBlob matches against the whole raw header block
+	// ("Name: value" lines), as nuclei's `part: header` does.
+	MatchHeaderBlob(p *Pattern, attack bool) bool
+	// MatchResponseBlob matches against the status line, raw headers and
+	// body together, as nuclei's `part: response` does.
+	MatchResponseBlob(p *Pattern, attack bool) bool
 }
+
+// Source identifies where a signature came from.
+type Source string
+
+// Signature sources.
+const (
+	SourceWafw00f Source = "wafw00f" // ported from EnableSecurity/wafw00f
+	SourceNuclei  Source = "nuclei"  // from projectdiscovery/nuclei-templates waf-detect
+)
 
 // Plugin is a single WAF signature.
 type Plugin struct {
@@ -39,6 +54,8 @@ type Plugin struct {
 	ID string
 	// Name is the full display name, e.g. "Cloudflare (Cloudflare Inc.)".
 	Name string
+	// Source is where the signature came from.
+	Source Source
 	// Detect reports whether the WAF is present.
 	Detect func(m Matcher) bool
 }
@@ -68,30 +85,49 @@ func splitName(name string) (string, string) {
 
 var (
 	registry = map[string]Plugin{}
-	ordered  []Plugin
+	extra    []Plugin // nuclei and other supplementary sources
+	core     []Plugin // wafw00f, in priority order; cached
+	ordered  []Plugin // core + extra; cached
 )
 
-// register adds a plugin. It is called from init functions only.
+// register adds a wafw00f signature. It is called from init functions only.
 func register(id, name string, detect func(Matcher) bool) {
-	if _, dup := registry[id]; dup {
-		panic("plugins: duplicate plugin id " + id)
+	add(Plugin{ID: id, Name: name, Source: SourceWafw00f, Detect: detect})
+}
+
+// registerExtra adds a supplementary signature (e.g. nuclei).
+func registerExtra(id, name string, source Source, detect func(Matcher) bool) {
+	add(Plugin{ID: id, Name: name, Source: source, Detect: detect})
+}
+
+func add(p Plugin) {
+	if _, dup := registry[p.ID]; dup {
+		panic("plugins: duplicate plugin id " + p.ID)
 	}
-	registry[id] = Plugin{ID: id, Name: name, Detect: detect}
+	registry[p.ID] = p
+	if p.Source == SourceWafw00f {
+		core = nil
+	} else {
+		extra = append(extra, p)
+	}
 	ordered = nil
 }
 
-// All returns every plugin in check order: the upstream priority list first,
-// followed by any remaining plugins sorted by name.
-func All() []Plugin {
-	if ordered != nil {
-		return ordered
+// Core returns only the wafw00f signatures, in the upstream priority order
+// followed by any remaining ones sorted by name. This is the set the parity
+// tests pin against.
+func Core() []Plugin {
+	if core != nil {
+		return core
 	}
-	byName := make(map[string]Plugin, len(registry))
+	byName := make(map[string]Plugin)
 	for _, p := range registry {
-		byName[p.Name] = p
+		if p.Source == SourceWafw00f {
+			byName[p.Name] = p
+		}
 	}
-	out := make([]Plugin, 0, len(registry))
-	seen := make(map[string]bool, len(registry))
+	out := make([]Plugin, 0, len(byName))
+	seen := make(map[string]bool, len(byName))
 	for _, name := range priority {
 		if p, ok := byName[name]; ok && !seen[name] {
 			out = append(out, p)
@@ -99,13 +135,25 @@ func All() []Plugin {
 		}
 	}
 	var rest []Plugin
-	for _, p := range registry {
+	for _, p := range byName {
 		if !seen[p.Name] {
 			rest = append(rest, p)
 		}
 	}
 	sort.Slice(rest, func(i, j int) bool { return rest[i].Name < rest[j].Name })
-	ordered = append(out, rest...)
+	core = append(out, rest...)
+	return core
+}
+
+// All returns every signature in check order: the wafw00f set first, then the
+// supplementary (nuclei) signatures sorted by name.
+func All() []Plugin {
+	if ordered != nil {
+		return ordered
+	}
+	rest := append([]Plugin(nil), extra...)
+	sort.Slice(rest, func(i, j int) bool { return rest[i].Name < rest[j].Name })
+	ordered = append(append([]Plugin(nil), Core()...), rest...)
 	return ordered
 }
 
@@ -153,6 +201,21 @@ func Compile(expr string) (*Pattern, error) {
 		p.lit = asciiLower([]byte(lit))
 	}
 	return p, nil
+}
+
+// nx compiles a nuclei regex matcher. Unlike rx it does not force
+// case-insensitivity: nuclei regex patterns carry their own (?i) when wanted.
+func nx(expr string) *Pattern {
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		panic(fmt.Errorf("plugins: bad nuclei regex %q: %w", expr, err))
+	}
+	return &Pattern{src: expr, re: re}
+}
+
+// nw compiles a nuclei word matcher: a case-sensitive literal substring.
+func nw(word string) *Pattern {
+	return &Pattern{src: word, re: regexp.MustCompile(regexp.QuoteMeta(word))}
 }
 
 func asciiLiteral(expr string) (string, bool) {
